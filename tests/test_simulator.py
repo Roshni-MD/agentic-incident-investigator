@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from telemetry.simulator import create_cpu_bottleneck_incident
 from telemetry.models import IncidentType
 
@@ -35,3 +36,20 @@ def test_cpu_bottleneck_has_expected_signal():
     assert degraded.throughput_rps < normal.throughput_rps
 
     assert degraded.data_loading_ms > normal.data_loading_ms
+
+
+def test_simulator_is_deterministic():
+
+    start = datetime(
+        2026,
+        1,
+        1,
+        10,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    incident_1 = create_cpu_bottleneck_incident(start)
+    incident_2 = create_cpu_bottleneck_incident(start)
+
+    assert incident_1 == incident_2

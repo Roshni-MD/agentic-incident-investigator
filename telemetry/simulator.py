@@ -9,8 +9,11 @@ from .models import (
 )
 
 
-def create_cpu_bottleneck_incident() -> Incident:
-    start = datetime.now(timezone.utc)
+def create_cpu_bottleneck_incident(
+    start: datetime | None = None,
+) -> Incident:
+    if start is None:
+        start = datetime.now(timezone.utc)
 
     metrics = []
 
