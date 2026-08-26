@@ -1,0 +1,34 @@
+[project]
+name = "agentic-incident-investigator"
+version = "0.1.0"
+description = "An agentic system for investigating ML infrastructure incidents"
+requires-python = ">=3.11"
+
+dependencies = [
+    "pydantic>=2.0",
+    "pytest>=8.0",
+]
+
+[project.optional-dependencies]
+agent = [
+    "langgraph",
+    "langchain",
+]
+
+rag = [
+    "chromadb",
+]
+
+mcp = [
+    "mcp",
+]
+
+observability = [
+    "prometheus-client",
+]
+
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]

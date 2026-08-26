@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+
+# macOS
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test / coverage
+.coverage
+htmlcov/
+
+# Local databases / vector stores
+*.db
+chroma/
+data/
+
+# Logs
+*.log
