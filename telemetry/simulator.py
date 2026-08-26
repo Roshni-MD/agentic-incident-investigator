@@ -34,7 +34,7 @@ def create_cpu_bottleneck_incident() -> Incident:
         metrics.append(
             MetricSnapshot(
                 timestamp=start + timedelta(minutes=i),
-                cpu_utilization=92 + i,
+                cpu_utilization=96,
                 gpu_utilization=42,
                 gpu_memory_utilization=70,
                 p95_latency_ms=135,
