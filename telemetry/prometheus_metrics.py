@@ -43,6 +43,18 @@ GPU_KERNEL_TIME = Gauge(
     ["service"],
 )
 
+NETWORK_UTILIZATION = Gauge(
+    "ml_service_network_utilization",
+    "Network utilization percentage",
+    ["service"],
+)
+
+NETWORK_LATENCY = Gauge(
+    "ml_service_network_latency_ms",
+    "Network latency in milliseconds",
+    ["service"],
+)
+
 
 def publish_metrics(
     service_name: str,
@@ -53,6 +65,8 @@ def publish_metrics(
     throughput_rps: float,
     data_loading_ms: float,
     gpu_kernel_ms: float,
+    network_utilization: float,
+    network_latency_ms: float,
 ) -> None:
 
     CPU_UTILIZATION.labels(service_name).set(cpu_utilization)
@@ -77,4 +91,12 @@ def publish_metrics(
 
     GPU_KERNEL_TIME.labels(service_name).set(
         gpu_kernel_ms
+    )
+
+    NETWORK_UTILIZATION.labels(service_name).set(
+        network_utilization
+    )
+
+    NETWORK_LATENCY.labels(service_name).set(
+        network_latency_ms
     )

@@ -24,6 +24,8 @@ class MetricSnapshot(BaseModel):
 
     data_loading_ms: float = Field(ge=0)
     gpu_kernel_ms: float = Field(ge=0)
+    network_utilization: float = Field(ge=0, le=100)
+    network_latency_ms: float = Field(ge=0)
 
 
 class Deployment(BaseModel):

@@ -16,6 +16,8 @@ def publish_snapshot(service_name, snapshot) -> None:
         throughput_rps=snapshot.throughput_rps,
         data_loading_ms=snapshot.data_loading_ms,
         gpu_kernel_ms=snapshot.gpu_kernel_ms,
+        network_utilization=snapshot.network_utilization,
+        network_latency_ms=snapshot.network_latency_ms,
     )
 
 
