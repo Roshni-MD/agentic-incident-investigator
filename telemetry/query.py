@@ -163,3 +163,23 @@ def normalize_query_result(
             )
 
     return points
+
+def get_current_metric(
+    client: PrometheusClient,
+    metric_name: str,
+    service_name: str,
+) -> MetricPoint | None:
+
+    promql = build_metric_query(
+        metric_name=metric_name,
+        service_name=service_name,
+    )
+
+    data = client.query(promql)
+
+    points = normalize_query_result(data)
+
+    if not points:
+        return None
+
+    return points[-1]
