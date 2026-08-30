@@ -1,7 +1,8 @@
+from datetime import timedelta
+
 import pytest
 
-from mcp_server.server import mcp
-
+from mcp_server.server import incident, mcp
 
 @pytest.mark.asyncio
 async def test_mcp_tools_are_registered():
@@ -13,6 +14,8 @@ async def test_mcp_tools_are_registered():
         "get_current_metric",
         "get_metric_history",
         "get_service_health",
+        "query_logs",
+        "get_recent_deployments",
     }
 
 
@@ -75,3 +78,90 @@ async def test_get_service_health_tool():
     assert metrics["throughput_rps"]["value"] == 760.0
     assert metrics["data_loading_ms"]["value"] == 380.0
     assert metrics["gpu_kernel_ms"]["value"] == 90.0
+
+@pytest.mark.asyncio
+async def test_query_logs_tool():
+    result = await mcp.call_tool(
+        "query_logs",
+        {
+            "service_name": incident.service_name,
+            "start_time": incident.started_at.isoformat(),
+            "end_time": incident.metrics[-1].timestamp.isoformat(),
+        },
+    )
+
+    assert result.is_error is False
+
+    data = result.structured_content["result"]
+
+    assert len(data) == 2
+
+    assert data[0]["service_name"] == "image-ranking-service"
+    assert data[0]["level"] == "WARNING"
+    assert data[0]["message"] == "Data preprocessing latency increased"
+    assert data[0]["metadata"]["component"] == "image-preprocessor"
+    assert data[0]["metadata"]["version"] == "v2.4"
+
+    assert data[1]["level"] == "WARNING"
+    assert data[1]["message"] == "GPU utilization below expected threshold"
+
+
+@pytest.mark.asyncio
+async def test_query_logs_empty_time_range():
+    start = incident.metrics[-1].timestamp + timedelta(minutes=1)
+    end = start + timedelta(minutes=1)
+
+    result = await mcp.call_tool(
+        "query_logs",
+        {
+            "service_name": incident.service_name,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+    )
+
+    assert result.is_error is False
+    assert result.structured_content["result"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_recent_deployments_tool():
+    result = await mcp.call_tool(
+        "get_recent_deployments",
+        {
+            "service_name": incident.service_name,
+            "start_time": incident.metrics[0].timestamp.isoformat(),
+            "end_time": incident.metrics[-1].timestamp.isoformat(),
+        },
+    )
+
+    assert result.is_error is False
+
+    data = result.structured_content["result"]
+
+    assert len(data) == 1
+
+    deployment = data[0]
+
+    assert deployment["deployment_id"] == "deploy-1002"
+    assert deployment["service_name"] == "image-ranking-service"
+    assert deployment["model_name"] == "ranking-model"
+    assert deployment["model_version"] == "v2.4"
+    assert deployment["previous_version"] == "v2.3"
+
+@pytest.mark.asyncio
+async def test_get_recent_deployments_empty_time_range():
+    start = incident.metrics[-1].timestamp + timedelta(minutes=1)
+    end = start + timedelta(minutes=1)
+
+    result = await mcp.call_tool(
+        "get_recent_deployments",
+        {
+            "service_name": incident.service_name,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+    )
+
+    assert result.is_error is False
+    assert result.structured_content["result"] == []

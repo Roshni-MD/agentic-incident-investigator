@@ -10,6 +10,8 @@ from telemetry.query import (
     get_metric_history,
 )
 
+from telemetry.scenarios import load_cpu_bottleneck_scenario
+
 
 mcp = MCPServer(
     name="AI Incident Investigation Agent",
@@ -22,6 +24,7 @@ mcp = MCPServer(
 
 prometheus = PrometheusClient()
 
+incident, repository = load_cpu_bottleneck_scenario()
 
 async def get_current_metric(
     metric_name: str,
@@ -124,6 +127,61 @@ async def get_service_health(
         "metrics": metrics,
     }
 
+async def query_logs(
+    service_name: str,
+    start_time: str,
+    end_time: str,
+) -> list[dict[str, Any]]:
+    """Query logs for an ML service within a time range."""
+
+    start = datetime.fromisoformat(start_time)
+    end = datetime.fromisoformat(end_time)
+
+    logs = repository.get_logs(
+        service_name=service_name,
+        start_time=start,
+        end_time=end,
+    )
+
+    return [
+        {
+            "timestamp": log.timestamp.isoformat(),
+            "service_name": log.service_name,
+            "level": log.level,
+            "message": log.message,
+            "metadata": log.metadata,
+        }
+        for log in logs
+    ]
+
+async def get_recent_deployments(
+    service_name: str,
+    start_time: str,
+    end_time: str,
+) -> list[dict[str, Any]]:
+    """Get deployments for an ML service within a time range."""
+
+    start = datetime.fromisoformat(start_time)
+    end = datetime.fromisoformat(end_time)
+
+    deployments = repository.get_deployments(
+        service_name=service_name,
+        start_time=start,
+        end_time=end,
+    )
+
+    return [
+        {
+            "deployment_id": deployment.deployment_id,
+            "service_name": deployment.service_name,
+            "model_name": deployment.model_name,
+            "model_version": deployment.model_version,
+            "timestamp": deployment.timestamp.isoformat(),
+            "previous_version": deployment.previous_version,
+        }
+        for deployment in deployments
+    ]
+
 
 mcp.add_tool(
     get_current_metric,
@@ -141,6 +199,20 @@ mcp.add_tool(
     get_service_health,
     name="get_service_health",
     description="Get the current observability snapshot for an ML service.",
+)
+
+mcp.add_tool(
+    query_logs,
+    name="query_logs",
+    description="Query logs for an ML service within a time range.",
+)
+
+mcp.add_tool(
+    get_recent_deployments,
+    name="get_recent_deployments",
+    description=(
+        "Get deployments for an ML service within a time range."
+    ),
 )
 
 
