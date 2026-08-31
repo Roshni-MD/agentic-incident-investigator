@@ -64,6 +64,7 @@ class OpenAIClient(LLMClient):
                 AgentToolCall(
                     tool_name=tool_call.function.name,
                     arguments=arguments,
+                    tool_call_id=tool_call.id,
                 )
             )
 

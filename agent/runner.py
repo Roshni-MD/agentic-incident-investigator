@@ -54,6 +54,15 @@ class AgentRunner:
             if not response.tool_calls:
                 return response
 
+            # Preserve the assistant's structured tool calls.
+            messages.append(
+                AgentMessage(
+                    role="assistant",
+                    content=response.answer,
+                    tool_calls=response.tool_calls,
+                )
+            )
+
             for tool_call in response.tool_calls:
                 tool = self.tools.get(tool_call.tool_name)
 
@@ -63,17 +72,9 @@ class AgentRunner:
 
                 messages.append(
                     AgentMessage(
-                        role="assistant",
-                        content=(
-                            f"Tool call: {tool_call.tool_name}"
-                        ),
-                    )
-                )
-
-                messages.append(
-                    AgentMessage(
                         role="tool",
                         content=str(result),
+                        tool_call_id=tool_call.tool_call_id,
                     )
                 )
 

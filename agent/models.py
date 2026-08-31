@@ -1,24 +1,35 @@
 from pydantic import BaseModel, Field
 
 
-class AgentMessage(BaseModel):
-    role: str
-    content: str
-
-
 class AgentToolCall(BaseModel):
     tool_name: str
-    arguments: dict[str, object] = Field(default_factory=dict)
+    arguments: dict[str, object] = Field(
+        default_factory=dict,
+    )
+    tool_call_id: str | None = None
 
 
 class AgentToolResult(BaseModel):
     tool_name: str
     result: object
+    tool_call_id: str | None = None
+
+
+class AgentMessage(BaseModel):
+    role: str
+    content: str = ""
+
+    tool_call_id: str | None = None
+    tool_calls: list[AgentToolCall] = Field(
+        default_factory=list,
+    )
 
 
 class AgentResponse(BaseModel):
     answer: str = ""
-    tool_calls: list[AgentToolCall] = Field(default_factory=list)
+    tool_calls: list[AgentToolCall] = Field(
+        default_factory=list,
+    )
 
 
 class InvestigationContext(BaseModel):
@@ -30,5 +41,3 @@ class InvestigationContext(BaseModel):
     available_tools: list[str] = Field(
         default_factory=list,
     )
-
-

@@ -12,7 +12,7 @@ from telemetry.scenarios import load_cpu_bottleneck_scenario
 
 from agent.llm import LLMClient
 from agent.runner import AgentRunner
-
+from agent.telemetry_tools import build_telemetry_tool_registry
 
 class MockLLM(LLMClient):
 
@@ -259,3 +259,176 @@ async def test_agent_runner_enforces_iteration_limit():
 
     with pytest.raises(RuntimeError, match="maximum number"):
         await runner.run(incident)
+
+def test_tool_registry_generates_openai_schemas():
+    registry = AgentToolRegistry()
+
+    async def get_service_health(
+        service_name: str,
+    ) -> dict[str, object]:
+        """Get the current health of an ML service."""
+        return {
+            "service_name": service_name,
+            "status": "ok",
+        }
+
+    registry.register(
+        "get_service_health",
+        get_service_health,
+    )
+
+    schemas = registry.schemas()
+
+    assert len(schemas) == 1
+
+    schema = schemas[0]
+
+    assert schema["type"] == "function"
+
+    function = schema["function"]
+
+    assert function["name"] == "get_service_health"
+    assert (
+        function["description"]
+        == "Get the current health of an ML service."
+    )
+
+    assert (
+        function["parameters"]["properties"]["service_name"]["type"]
+        == "string"
+    )
+
+    assert function["parameters"]["required"] == [
+        "service_name",
+    ]
+
+@pytest.mark.asyncio
+async def test_agent_runner_supports_multi_step_investigation():
+    incident, _ = load_cpu_bottleneck_scenario()
+
+    registry = AgentToolRegistry()
+
+    calls: list[str] = []
+
+    async def get_service_health(
+        service_name: str,
+    ) -> dict[str, object]:
+        calls.append("get_service_health")
+
+        return {
+            "service_name": service_name,
+            "status": "degraded",
+            "cpu_utilization": 96.0,
+            "gpu_utilization": 42.0,
+        }
+
+    async def query_logs(
+        service_name: str,
+    ) -> dict[str, object]:
+        calls.append("query_logs")
+
+        return {
+            "service_name": service_name,
+            "logs": [
+                {
+                    "level": "WARNING",
+                    "message": "Data preprocessing latency increased",
+                }
+            ],
+        }
+
+    registry.register(
+        "get_service_health",
+        get_service_health,
+    )
+
+    registry.register(
+        "query_logs",
+        query_logs,
+    )
+
+    class MultiStepLLM(LLMClient):
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.call_count += 1
+
+            if self.call_count == 1:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_service_health",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call_health",
+                        )
+                    ]
+                )
+
+            if self.call_count == 2:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="query_logs",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call_logs",
+                        )
+                    ]
+                )
+
+            return AgentResponse(
+                answer=(
+                    "The incident is likely caused by a "
+                    "CPU-side preprocessing bottleneck."
+                )
+            )
+
+    llm = MultiStepLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+    )
+
+    response = await runner.run(incident)
+
+    assert response.answer == (
+        "The incident is likely caused by a "
+        "CPU-side preprocessing bottleneck."
+    )
+
+    assert calls == [
+        "get_service_health",
+        "query_logs",
+    ]
+
+    assert llm.call_count == 3
+
+@pytest.mark.asyncio
+async def test_telemetry_tool_registry_uses_real_repository():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    health_tool = registry.get("get_service_health")
+
+    result = await health_tool(
+        service_name=incident.service_name,
+    )
+
+    assert result["service_name"] == incident.service_name
+    assert result["status"] == "ok"
+
+    metrics = result["metrics"]
+
+    assert metrics["cpu_utilization"]["value"] == 96.0
+    assert metrics["gpu_utilization"]["value"] == 42.0
+    assert metrics["gpu_memory_utilization"]["value"] == 70.0
