@@ -1,12 +1,29 @@
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
 
+class EvidenceSource(str, Enum):
+    METRICS = "metrics"
+    LOGS = "logs"
+    DEPLOYMENT = "deployment"
+    CONFIGURATION = "configuration"
+    KNOWLEDGE_BASE = "knowledge_base"
+
+
+class EvidenceStrength(str, Enum):
+    WEAK = "weak"
+    MODERATE = "moderate"
+    STRONG = "strong"
+    CRITICAL = "critical"
+
+
 class Evidence(BaseModel):
-    source: str
+    source: EvidenceSource
     description: str
     timestamp: datetime | None = None
+    strength: EvidenceStrength = EvidenceStrength.MODERATE
 
 
 class Hypothesis(BaseModel):
@@ -15,6 +32,12 @@ class Hypothesis(BaseModel):
     explanation: str
     evidence: list[Evidence] = []
     recommended_actions: list[str] = Field(default_factory=list)
+
+
+class TimelineEvent(BaseModel):
+    timestamp: datetime
+    description: str
+    source: EvidenceSource
 
 
 class InvestigationReport(BaseModel):
@@ -28,4 +51,5 @@ class InvestigationReport(BaseModel):
 
     evidence: list[Evidence] = []
     hypotheses: list[Hypothesis] = []
+    timeline: list[TimelineEvent] = []
     recommended_actions: list[str] = []

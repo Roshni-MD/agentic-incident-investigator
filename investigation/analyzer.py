@@ -1,7 +1,13 @@
 from telemetry.models import Incident
 from telemetry.repository import TelemetryRepository
 
-from .models import Evidence, Hypothesis, InvestigationReport
+from .models import (
+    Evidence,
+    EvidenceSource,
+    Hypothesis,
+    InvestigationReport,
+    TimelineEvent,
+)
 
 from investigation.hypotheses.base import HypothesisDetector
 from investigation.hypotheses.cpu_bottleneck import CPUBottleneckDetector
@@ -26,6 +32,30 @@ class IncidentAnalyzer:
             GPUOOMDetector(),
             NetworkBottleneckDetector(),
         ]
+
+    def _deduplicate_evidence(
+    self,
+    evidence: list[Evidence],
+) -> list[Evidence]:
+        """Remove duplicate evidence while preserving order."""
+
+        seen: set[tuple[str, str, str]] = set()
+        result: list[Evidence] = []
+
+        for item in evidence:
+            key = (
+                item.source.value,
+                item.description,
+                item.timestamp.isoformat(),
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            result.append(item)
+
+        return result
 
     def investigate(self, incident: Incident) -> InvestigationReport:
         """Investigate an incident using registered hypothesis detectors."""
@@ -57,6 +87,20 @@ class IncidentAnalyzer:
             for hypothesis in hypotheses:
                 evidence.extend(hypothesis.evidence)
 
+            evidence = self._deduplicate_evidence(evidence)
+            evidence.sort(
+                key=lambda item: item.timestamp,
+            )
+
+            timeline = [
+                TimelineEvent(
+                    timestamp=item.timestamp,
+                    description=item.description,
+                    source=item.source,
+                )
+                for item in evidence
+            ]
+
             recommended_actions = root_hypothesis.recommended_actions
 
         else:
@@ -73,6 +117,7 @@ class IncidentAnalyzer:
             confidence=confidence,
             evidence=evidence,
             hypotheses=hypotheses,
+            timeline=timeline,
             recommended_actions=recommended_actions,
         )
 
