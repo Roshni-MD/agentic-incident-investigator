@@ -1,6 +1,8 @@
 import json
 import os
 
+from typing import Any
+
 from openai import AsyncOpenAI
 
 from agent.llm import LLMClient
@@ -34,6 +36,7 @@ class OpenAIClient(LLMClient):
     async def generate(
         self,
         messages: list[AgentMessage],
+        tools: list[dict[str, Any]] | None = None,
     ) -> AgentResponse:
 
         response = await self.client.chat.completions.create(
@@ -45,10 +48,26 @@ class OpenAIClient(LLMClient):
                 }
                 for message in messages
             ],
+            tools=tools or None,
         )
 
         message = response.choices[0].message
 
+        tool_calls: list[AgentToolCall] = []
+
+        for tool_call in getattr(message, "tool_calls", None) or []:
+            arguments = json.loads(
+                tool_call.function.arguments or "{}"
+            )
+
+            tool_calls.append(
+                AgentToolCall(
+                    tool_name=tool_call.function.name,
+                    arguments=arguments,
+                )
+            )
+
         return AgentResponse(
             answer=message.content or "",
+            tool_calls=tool_calls,
         )

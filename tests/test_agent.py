@@ -22,6 +22,7 @@ class MockLLM(LLMClient):
     async def generate(
         self,
         messages: list[AgentMessage],
+        tools=None,
     ) -> AgentResponse:
         self.calls += 1
 
@@ -48,6 +49,7 @@ class InfiniteToolLLM(LLMClient):
     async def generate(
         self,
         messages: list[AgentMessage],
+        tools=None,
     ) -> AgentResponse:
         return AgentResponse(
             answer="",

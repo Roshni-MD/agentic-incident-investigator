@@ -46,7 +46,10 @@ class AgentRunner:
         ]
 
         for _ in range(self.max_iterations):
-            response = await self.llm.generate(messages)
+            response = await self.llm.generate(
+                messages,
+                tools=self.tools.schemas(),
+            )
 
             if not response.tool_calls:
                 return response
