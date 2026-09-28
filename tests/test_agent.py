@@ -432,3 +432,168 @@ async def test_telemetry_tool_registry_uses_real_repository():
     assert metrics["cpu_utilization"]["value"] == 96.0
     assert metrics["gpu_utilization"]["value"] == 42.0
     assert metrics["gpu_memory_utilization"]["value"] == 70.0
+
+@pytest.mark.asyncio
+async def test_agent_runner_passes_tool_schemas_to_llm():
+    incident, _ = load_cpu_bottleneck_scenario()
+
+    registry = AgentToolRegistry()
+
+    async def get_service_health(
+        service_name: str,
+    ) -> dict[str, object]:
+        """Get the current health of an ML service."""
+        return {
+            "service_name": service_name,
+            "status": "ok",
+        }
+
+    registry.register(
+        "get_service_health",
+        get_service_health,
+    )
+
+    class SchemaCapturingLLM(LLMClient):
+        def __init__(self) -> None:
+            self.received_tools = None
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.received_tools = tools
+
+            return AgentResponse(
+                answer="Investigation complete.",
+            )
+
+    llm = SchemaCapturingLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+    )
+
+    response = await runner.run(incident)
+
+    assert response.answer == "Investigation complete."
+
+    assert llm.received_tools is not None
+    assert len(llm.received_tools) == 1
+
+    schema = llm.received_tools[0]
+
+    assert schema["type"] == "function"
+    assert schema["function"]["name"] == "get_service_health"
+
+"""
+This is the first test that connects the pieces together:
+
+load_cpu_bottleneck_scenario()
+             │
+             ▼
+TelemetryRepository
+             │
+             ▼
+build_telemetry_tool_registry()
+             │
+             ▼
+AgentToolRegistry
+             │
+             ▼
+AgentRunner
+             │
+             ├── sends tool schemas ──────► Mock LLM
+             │
+             ◄── get_service_health ────────┤
+             │
+             ▼
+actual telemetry tool
+             │
+             ▼
+TelemetryRepository
+             │
+             ▼
+tool result
+             │
+             ▼
+AgentRunner ───────────────────────────────► Mock LLM
+                                             │
+                                             ▼
+                                        final answer
+"""
+@pytest.mark.asyncio
+async def test_agent_runner_uses_real_telemetry_tools():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    class RealTelemetryLLM(LLMClient):
+        def __init__(self) -> None:
+            self.call_count = 0
+            self.received_tool_results = []
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.call_count += 1
+
+            if self.call_count == 1:
+                # Verify the real telemetry tools were exposed to the LLM.
+                assert tools is not None
+
+                tool_names = {
+                    tool["function"]["name"]
+                    for tool in tools
+                }
+
+                assert tool_names == {
+                    "get_current_metric",
+                    "get_service_health",
+                }
+
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_service_health",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call_health",
+                        )
+                    ]
+                )
+
+            # Verify that the tool result was returned to the LLM.
+            tool_messages = [
+                message
+                for message in messages
+                if message.role == "tool"
+            ]
+
+            assert len(tool_messages) == 1
+            assert tool_messages[0].tool_call_id == "call_health"
+            assert "image-ranking-service" in tool_messages[0].content
+            assert "cpu_utilization" in tool_messages[0].content
+
+            return AgentResponse(
+                answer="The service has a CPU-side bottleneck."
+            )
+
+    llm = RealTelemetryLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+    )
+
+    response = await runner.run(incident)
+
+    assert response.answer == (
+        "The service has a CPU-side bottleneck."
+    )
+
+    assert llm.call_count == 2

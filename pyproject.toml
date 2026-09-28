@@ -5,32 +5,44 @@ description = "An agentic system for investigating ML infrastructure incidents"
 requires-python = ">=3.11"
 
 dependencies = [
+    # Data validation and settings via typed models
     "pydantic>=2.0",
+    # Test runner and assertion framework
     "pytest>=8.0",
+    # Simple HTTP client for calling REST APIs
     "requests",
+    # OpenAI API client for LLM access
     "openai",
 ]
 
 [project.optional-dependencies]
 agent = [
+    # Graph-based orchestration and agent tooling
     "langgraph",
+    # Framework for building LLM applications and chains
     "langchain",
 ]
 
 rag = [
+    # Vector database for retrieval-augmented generation
     "chromadb",
 ]
 
 mcp = [
+    # MCP (Model-Context Protocol) server/client utilities
     "mcp",
 ]
 
 observability = [
+    # Client metrics exporter for Prometheus monitoring
     "prometheus-client",
 ]
 
 dev = [
+    # Test runner (development)
     "pytest",
+    # Asyncio support for pytest
     "pytest-asyncio",
+    # Fast Python linter and formatter
     "ruff",
 ]
