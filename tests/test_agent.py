@@ -14,6 +14,8 @@ from agent.llm import LLMClient
 from agent.runner import AgentRunner
 from agent.telemetry_tools import build_telemetry_tool_registry
 
+import json
+
 class MockLLM(LLMClient):
 
     def __init__(self) -> None:
@@ -552,7 +554,10 @@ async def test_agent_runner_uses_real_telemetry_tools():
 
                 assert tool_names == {
                     "get_current_metric",
+                    "get_metric_history",
                     "get_service_health",
+                    "query_logs",
+                    "get_recent_deployments",
                 }
 
                 return AgentResponse(
@@ -597,3 +602,281 @@ async def test_agent_runner_uses_real_telemetry_tools():
     )
 
     assert llm.call_count == 2
+
+@pytest.mark.asyncio
+async def test_telemetry_tool_registry_gets_metric_history():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    tool = registry.get("get_metric_history")
+
+    start_time = incident.metrics[0].timestamp.isoformat()
+    end_time = incident.metrics[-1].timestamp.isoformat()
+
+    result = await tool(
+        metric_name="cpu_utilization",
+        service_name=incident.service_name,
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    assert len(result) > 0
+    assert "timestamp" in result[0]
+    assert "value" in result[0]
+
+
+@pytest.mark.asyncio
+async def test_telemetry_tool_registry_queries_logs():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    tool = registry.get("query_logs")
+
+    result = await tool(
+        service_name=incident.service_name,
+        start_time=incident.metrics[0].timestamp.isoformat(),
+        end_time=incident.metrics[-1].timestamp.isoformat(),
+    )
+
+    assert len(result) > 0
+    assert result[0]["service_name"] == incident.service_name
+    assert "level" in result[0]
+    assert "message" in result[0]
+
+
+@pytest.mark.asyncio
+async def test_telemetry_tool_registry_gets_recent_deployments():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    tool = registry.get("get_recent_deployments")
+
+    result = await tool(
+        service_name=incident.service_name,
+        start_time=incident.metrics[0].timestamp.isoformat(),
+        end_time=incident.metrics[-1].timestamp.isoformat(),
+    )
+
+    assert len(result) > 0
+    assert result[0]["service_name"] == incident.service_name
+    assert "deployment_id" in result[0]
+    assert "model_version" in result[0]
+
+@pytest.mark.asyncio
+async def test_agent_runner_performs_multi_source_investigation():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    class MultiSourceLLM(LLMClient):
+        def __init__(self) -> None:
+            self.call_count = 0
+            self.tool_results = []
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.call_count += 1
+
+            tool_messages = [
+                message
+                for message in messages
+                if message.role == "tool"
+            ]
+
+            self.tool_results = tool_messages
+
+            if self.call_count == 1:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_service_health",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call_health",
+                        )
+                    ]
+                )
+
+            if self.call_count == 2:
+                assert len(tool_messages) == 1
+
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_metric_history",
+                            arguments={
+                                "metric_name": "cpu_utilization",
+                                "service_name": incident.service_name,
+                                "start_time": incident.metrics[0].timestamp.isoformat(),
+                                "end_time": incident.metrics[-1].timestamp.isoformat(),
+                            },
+                            tool_call_id="call_history",
+                        )
+                    ]
+                )
+
+            if self.call_count == 3:
+                assert len(tool_messages) == 2
+
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="query_logs",
+                            arguments={
+                                "service_name": incident.service_name,
+                                "start_time": incident.metrics[0].timestamp.isoformat(),
+                                "end_time": incident.metrics[-1].timestamp.isoformat(),
+                            },
+                            tool_call_id="call_logs",
+                        )
+                    ]
+                )
+
+            if self.call_count == 4:
+                assert len(tool_messages) == 3
+
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_recent_deployments",
+                            arguments={
+                                "service_name": incident.service_name,
+                                "start_time": incident.metrics[0].timestamp.isoformat(),
+                                "end_time": incident.metrics[-1].timestamp.isoformat(),
+                            },
+                            tool_call_id="call_deployments",
+                        )
+                    ]
+                )
+
+            assert self.call_count == 5
+            assert len(tool_messages) == 4
+
+            return AgentResponse(
+                answer=(
+                    "The service has a CPU-side bottleneck. "
+                    "Telemetry shows elevated CPU utilization and "
+                    "the supporting investigation evidence is consistent "
+                    "with CPU-side preprocessing."
+                )
+            )
+
+    llm = MultiSourceLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+    )
+
+    response = await runner.run(incident)
+
+    assert response.answer.startswith(
+        "The service has a CPU-side bottleneck."
+    )
+
+    assert llm.call_count == 5
+    assert len(llm.tool_results) == 4
+
+@pytest.mark.asyncio
+async def test_agent_runner_serializes_tool_results_as_json():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    class JsonToolResultLLM(LLMClient):
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.call_count += 1
+
+            if self.call_count == 1:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_service_health",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call_health",
+                        )
+                    ]
+                )
+
+            tool_messages = [
+                message
+                for message in messages
+                if message.role == "tool"
+            ]
+
+            assert len(tool_messages) == 1
+
+            result = json.loads(tool_messages[0].content)
+
+            assert result["service_name"] == incident.service_name
+            assert result["status"] == "ok"
+            assert "metrics" in result
+
+            return AgentResponse(
+                answer="Tool result was valid JSON."
+            )
+
+    llm = JsonToolResultLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+    )
+
+    response = await runner.run(incident)
+
+    assert response.answer == "Tool result was valid JSON."
+
+@pytest.mark.asyncio
+async def test_agent_runner_provides_investigation_context():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    class ContextAwareLLM(LLMClient):
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            system_message = messages[0]
+
+            assert system_message.role == "system"
+            assert incident.incident_id in system_message.content
+            assert incident.service_name in system_message.content
+            assert incident.incident_type.value in system_message.content
+            assert incident.started_at.isoformat() in system_message.content
+
+            for tool_name in registry.names():
+                assert tool_name in system_message.content
+
+            return AgentResponse(
+                answer="Context received successfully."
+            )
+
+    llm = ContextAwareLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+    )
+
+    response = await runner.run(incident)
+
+    assert response.answer == "Context received successfully."

@@ -4,8 +4,11 @@ from .llm import LLMClient
 from .models import (
     AgentMessage,
     AgentResponse,
+    InvestigationContext,
 )
 from .tools import AgentToolRegistry
+
+import json
 
 
 class AgentRunner:
@@ -25,15 +28,24 @@ class AgentRunner:
         self,
         incident: Incident,
     ) -> AgentResponse:
+
+        context = InvestigationContext(
+            incident_id=incident.incident_id,
+            service_name=incident.service_name,
+            incident_type=incident.incident_type.value,
+            started_at=incident.started_at.isoformat(),
+            available_tools=self.tools.names(),
+        )
+
         messages = [
             AgentMessage(
                 role="system",
                 content=(
-                    "You are an ML infrastructure incident "
-                    "investigation agent. Investigate incidents "
-                    "using the available telemetry tools. "
-                    "Gather evidence before determining the "
-                    "root cause."
+                    "You are an ML infrastructure incident investigation agent. "
+                    "Investigate incidents using the available telemetry tools. "
+                    "Gather evidence before determining the root cause.\n\n"
+                    f"Investigation context:\n"
+                    f"{context.model_dump_json(indent=2)}"
                 ),
             ),
             AgentMessage(
@@ -73,7 +85,7 @@ class AgentRunner:
                 messages.append(
                     AgentMessage(
                         role="tool",
-                        content=str(result),
+                        content=json.dumps(result),
                         tool_call_id=tool_call.tool_call_id,
                     )
                 )
