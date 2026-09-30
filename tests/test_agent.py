@@ -17,6 +17,8 @@ from agent.context import (
     build_investigation_context,
     build_system_prompt,
 )
+from agent.tool_executor import ToolExecutor
+from agent.state import AgentState
 
 import json
 
@@ -920,3 +922,143 @@ def test_build_system_prompt_contains_investigation_context():
 
     for tool_name in registry.names():
         assert tool_name in prompt
+
+@pytest.mark.asyncio
+async def test_tool_executor_executes_registered_tool():
+    incident, repository = load_cpu_bottleneck_scenario()
+    registry = build_telemetry_tool_registry(repository)
+
+    executor = ToolExecutor(registry)
+
+    tool_call = AgentToolCall(
+        tool_name="get_current_metric",
+        arguments={
+            "metric_name": "gpu_utilization",
+            "service_name": incident.service_name,
+        },
+        tool_call_id="call_gpu",
+    )
+
+    result = await executor.execute(tool_call)
+
+    assert result["service_name"] == incident.service_name
+    assert result["metric_name"] == "gpu_utilization"
+    assert result["status"] == "ok"
+    assert "value" in result
+    assert "timestamp" in result
+
+def test_agent_state_starts_empty():
+    state = AgentState()
+
+    assert state.messages == []
+    assert state.iteration == 0
+
+@pytest.mark.asyncio
+async def test_agent_runner_tracks_investigation_state():
+    incident, repository = load_cpu_bottleneck_scenario()
+    registry = build_telemetry_tool_registry(repository)
+
+    captured_state = {}
+
+    class StateTrackingLLM(LLMClient):
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.call_count += 1
+
+            captured_state["message_count"] = len(messages)
+
+            if self.call_count == 1:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_current_metric",
+                            arguments={
+                                "metric_name": "cpu_utilization",
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call_cpu",
+                        )
+                    ]
+                )
+
+            assert self.call_count == 2
+
+            tool_messages = [
+                message for message in messages
+                if message.role == "tool"
+            ]
+
+            assert len(tool_messages) == 1
+            assert messages[0].role == "system"
+            assert messages[1].role == "user"
+            assert messages[2].role == "assistant"
+            assert messages[3].role == "tool"
+
+            return AgentResponse(
+                answer="Investigation complete."
+            )
+
+    llm = StateTrackingLLM()
+    runner = AgentRunner(llm=llm, tools=registry)
+
+    response = await runner.run(incident)
+
+    assert response.answer == "Investigation complete."
+    assert llm.call_count == 2
+    assert captured_state["message_count"] == 4
+
+def test_agent_state_adds_messages():
+    state = AgentState()
+
+    message = AgentMessage(
+        role="user",
+        content="Investigate the incident.",
+    )
+
+    state.add_message(message)
+
+    assert state.messages == [message]
+
+def test_agent_state_adds_assistant_response():
+    state = AgentState()
+
+    response = AgentResponse(
+        answer="I found elevated CPU utilization.",
+    )
+
+    state.add_assistant_response(response)
+
+    assert len(state.messages) == 1
+    assert state.messages[0].role == "assistant"
+    assert state.messages[0].content == response.answer
+    assert state.messages[0].tool_calls == []
+
+def test_agent_state_adds_tool_result():
+    state = AgentState()
+
+    state.add_tool_result(
+        content='{"status": "ok"}',
+        tool_call_id="call_123",
+    )
+
+    assert len(state.messages) == 1
+    assert state.messages[0].role == "tool"
+    assert state.messages[0].content == '{"status": "ok"}'
+    assert state.messages[0].tool_call_id == "call_123"
+
+def test_agent_state_advances_iteration():
+    state = AgentState()
+
+    assert state.iteration == 0
+
+    state.next_iteration()
+    assert state.iteration == 1
+
+    state.next_iteration()
+    assert state.iteration == 2
