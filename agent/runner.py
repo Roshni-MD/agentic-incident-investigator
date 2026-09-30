@@ -1,10 +1,10 @@
 from telemetry.models import Incident
 
+from .context import build_investigation_context, build_system_prompt
 from .llm import LLMClient
 from .models import (
     AgentMessage,
-    AgentResponse,
-    InvestigationContext,
+    AgentResponse
 )
 from .tools import AgentToolRegistry
 
@@ -29,12 +29,9 @@ class AgentRunner:
         incident: Incident,
     ) -> AgentResponse:
 
-        context = InvestigationContext(
-            incident_id=incident.incident_id,
-            service_name=incident.service_name,
-            incident_type=incident.incident_type.value,
-            started_at=incident.started_at.isoformat(),
-            available_tools=self.tools.names(),
+        context = build_investigation_context(
+            incident=incident,
+            tools=self.tools,
         )
 
         messages = [

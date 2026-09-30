@@ -13,6 +13,10 @@ from telemetry.scenarios import load_cpu_bottleneck_scenario
 from agent.llm import LLMClient
 from agent.runner import AgentRunner
 from agent.telemetry_tools import build_telemetry_tool_registry
+from agent.context import (
+    build_investigation_context,
+    build_system_prompt,
+)
 
 import json
 
@@ -110,11 +114,13 @@ def test_agent_response():
 
 
 def test_investigation_context():
-    incident, _ = load_cpu_bottleneck_scenario()
+    incident, repository = load_cpu_bottleneck_scenario()
+    registry = build_telemetry_tool_registry(repository)
 
-    from agent.context import build_investigation_context
-
-    context = build_investigation_context(incident)
+    context = build_investigation_context(
+        incident=incident,
+        tools=registry,
+    )
 
     assert context.incident_id == incident.incident_id
     assert context.service_name == incident.service_name
@@ -128,7 +134,6 @@ def test_investigation_context():
         "query_logs",
         "get_recent_deployments",
     }
-
 
 @pytest.mark.asyncio
 async def test_tool_registry():
@@ -880,3 +885,38 @@ async def test_agent_runner_provides_investigation_context():
     response = await runner.run(incident)
 
     assert response.answer == "Context received successfully."
+
+def test_build_investigation_context():
+    incident, repository = load_cpu_bottleneck_scenario()
+    registry = build_telemetry_tool_registry(repository)
+
+    context = build_investigation_context(
+        incident=incident,
+        tools=registry,
+    )
+
+    assert context.incident_id == incident.incident_id
+    assert context.service_name == incident.service_name
+    assert context.incident_type == incident.incident_type.value
+    assert context.started_at == incident.started_at.isoformat()
+    assert set(context.available_tools) == set(registry.names())
+
+def test_build_system_prompt_contains_investigation_context():
+    incident, repository = load_cpu_bottleneck_scenario()
+    registry = build_telemetry_tool_registry(repository)
+
+    context = build_investigation_context(
+        incident=incident,
+        tools=registry,
+    )
+
+    prompt = build_system_prompt(context)
+
+    assert "ML infrastructure incident investigation agent" in prompt
+    assert incident.incident_id in prompt
+    assert incident.service_name in prompt
+    assert incident.incident_type.value in prompt
+    assert incident.started_at.isoformat() in prompt
+
+    for tool_name in registry.names():
+        assert tool_name in prompt
