@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from agent.investigator import IncidentInvestigator
@@ -18,9 +19,8 @@ from agent.context import (
     build_system_prompt,
 )
 from agent.tool_executor import ToolExecutor
-from agent.state import AgentState
+from agent.state import AgentRunResult, AgentState, InvestigationStatus
 
-import json
 
 class MockLLM(LLMClient):
 
@@ -234,6 +234,7 @@ async def test_agent_runner_executes_tool_calls():
     assert response.answer == (
         "The service has a CPU-side bottleneck."
     )
+    assert response.state.status == InvestigationStatus.COMPLETED
 
     assert calls == [
         "image-ranking-service",
@@ -413,6 +414,8 @@ async def test_agent_runner_supports_multi_step_investigation():
         "The incident is likely caused by a "
         "CPU-side preprocessing bottleneck."
     )
+    assert response.state.status == InvestigationStatus.COMPLETED
+    assert response.state.iteration == 3
 
     assert calls == [
         "get_service_health",
@@ -487,6 +490,7 @@ async def test_agent_runner_passes_tool_schemas_to_llm():
     response = await runner.run(incident)
 
     assert response.answer == "Investigation complete."
+    assert response.state.status == InvestigationStatus.COMPLETED
 
     assert llm.received_tools is not None
     assert len(llm.received_tools) == 1
@@ -607,6 +611,8 @@ async def test_agent_runner_uses_real_telemetry_tools():
     assert response.answer == (
         "The service has a CPU-side bottleneck."
     )
+    assert response.state.status == InvestigationStatus.COMPLETED
+    assert response.state.iteration == 2
 
     assert llm.call_count == 2
 
@@ -787,6 +793,8 @@ async def test_agent_runner_performs_multi_source_investigation():
     assert response.answer.startswith(
         "The service has a CPU-side bottleneck."
     )
+    assert response.state.status == InvestigationStatus.COMPLETED
+    assert response.state.iteration == 5
 
     assert llm.call_count == 5
     assert len(llm.tool_results) == 4
@@ -849,6 +857,7 @@ async def test_agent_runner_serializes_tool_results_as_json():
     response = await runner.run(incident)
 
     assert response.answer == "Tool result was valid JSON."
+    assert response.state.status == InvestigationStatus.COMPLETED
 
 @pytest.mark.asyncio
 async def test_agent_runner_provides_investigation_context():
@@ -887,6 +896,7 @@ async def test_agent_runner_provides_investigation_context():
     response = await runner.run(incident)
 
     assert response.answer == "Context received successfully."
+    assert response.state.status == InvestigationStatus.COMPLETED
 
 def test_build_investigation_context():
     incident, repository = load_cpu_bottleneck_scenario()
@@ -1010,6 +1020,8 @@ async def test_agent_runner_tracks_investigation_state():
     response = await runner.run(incident)
 
     assert response.answer == "Investigation complete."
+    assert response.state.status == InvestigationStatus.COMPLETED
+    assert response.state.iteration == 2
     assert llm.call_count == 2
     assert captured_state["message_count"] == 4
 
@@ -1062,3 +1074,35 @@ def test_agent_state_advances_iteration():
 
     state.next_iteration()
     assert state.iteration == 2
+
+def test_agent_state_starts_running():
+    state = AgentState()
+
+    assert state.status == InvestigationStatus.RUNNING
+
+def test_agent_state_can_be_completed():
+    state = AgentState()
+
+    state.mark_completed()
+
+    assert state.status == InvestigationStatus.COMPLETED
+
+def test_agent_state_can_fail():
+    state = AgentState()
+
+    state.mark_failed()
+
+    assert state.status == InvestigationStatus.FAILED
+
+def test_agent_run_result_contains_answer_and_state():
+    state = AgentState()
+    state.mark_completed()
+
+    result = AgentRunResult(
+        answer="Investigation complete.",
+        state=state,
+    )
+
+    assert result.answer == "Investigation complete."
+    assert result.state is state
+    assert result.state.status == InvestigationStatus.COMPLETED

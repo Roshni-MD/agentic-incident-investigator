@@ -1,16 +1,13 @@
+import json
+
 from telemetry.models import Incident
 
 from .context import build_investigation_context, build_system_prompt
 from .llm import LLMClient
-from .models import (
-    AgentMessage,
-    AgentResponse
-)
-from .tools import AgentToolRegistry
+from .models import AgentMessage
+from .state import AgentRunResult, AgentState
 from .tool_executor import ToolExecutor
-from .state import AgentState
-
-import json
+from .tools import AgentToolRegistry
 
 
 class AgentRunner:
@@ -30,7 +27,7 @@ class AgentRunner:
     async def run(
         self,
         incident: Incident,
-    ) -> AgentResponse:
+    ) -> AgentRunResult:
 
         context = build_investigation_context(
             incident=incident,
@@ -62,7 +59,11 @@ class AgentRunner:
             )
 
             if not response.tool_calls:
-                return response
+                state.mark_completed()
+                return AgentRunResult(
+                    answer=response.answer,
+                    state=state,
+                )
 
             state.add_assistant_response(response)
 
@@ -74,6 +75,7 @@ class AgentRunner:
                     tool_call_id=tool_call.tool_call_id,
                 )
 
+        state.mark_failed()
         raise RuntimeError(
             "Agent exceeded maximum number of iterations."
         )

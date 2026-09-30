@@ -1,6 +1,15 @@
 from pydantic import BaseModel, Field
+from enum import Enum
 
 from .models import AgentMessage, AgentResponse
+
+
+class InvestigationStatus(str, Enum):
+    """Lifecycle state of an investigation."""
+
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class AgentState(BaseModel):
@@ -8,6 +17,7 @@ class AgentState(BaseModel):
 
     messages: list[AgentMessage] = Field(default_factory=list)
     iteration: int = 0
+    status: InvestigationStatus = InvestigationStatus.RUNNING
 
     def add_message(self, message: AgentMessage) -> None:
         """Add a message to the investigation history."""
@@ -40,3 +50,17 @@ class AgentState(BaseModel):
     def next_iteration(self) -> None:
         """Advance the investigation iteration."""
         self.iteration += 1
+
+    def mark_completed(self) -> None:
+        """Mark the investigation as successfully completed."""
+        self.status = InvestigationStatus.COMPLETED
+
+    def mark_failed(self) -> None:
+        """Mark the investigation as failed."""
+        self.status = InvestigationStatus.FAILED
+
+class AgentRunResult(BaseModel):
+    """Result of an agent investigation."""
+
+    answer: str
+    state: AgentState
