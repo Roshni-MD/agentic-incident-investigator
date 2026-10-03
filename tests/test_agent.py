@@ -1,11 +1,14 @@
 import json
 import pytest
 
+from agent import evidence
 from agent.investigator import IncidentInvestigator
 from agent.models import (
     AgentMessage,
     AgentResponse,
     AgentToolCall,
+    InvestigationEvidence,
+    InvestigationFinding,
 )
 from agent.tools import AgentToolRegistry
 from investigation.analyzer import IncidentAnalyzer
@@ -236,6 +239,14 @@ async def test_agent_runner_executes_tool_calls():
     )
     assert response.state.status == InvestigationStatus.COMPLETED
 
+    assert len(response.state.evidence) == 1
+
+    evidence = response.state.evidence[0]
+
+    assert evidence.source == "get_service_health"
+    assert evidence.description == "Result returned by get_service_health"
+    assert evidence.value is not None
+
     assert calls == [
         "image-ranking-service",
     ]
@@ -337,15 +348,15 @@ async def test_agent_runner_supports_multi_step_investigation():
     ) -> dict[str, object]:
         calls.append("query_logs")
 
-        return {
-            "service_name": service_name,
-            "logs": [
-                {
-                    "level": "WARNING",
-                    "message": "Data preprocessing latency increased",
-                }
-            ],
-        }
+        return [
+            {
+                "timestamp": "2026-08-29T16:58:00+00:00",
+                "service_name": service_name,
+                "level": "WARNING",
+                "message": "Data preprocessing latency increased",
+                "metadata": {},
+            }
+        ]
 
     registry.register(
         "get_service_health",
@@ -1106,3 +1117,76 @@ def test_agent_run_result_contains_answer_and_state():
     assert result.answer == "Investigation complete."
     assert result.state is state
     assert result.state.status == InvestigationStatus.COMPLETED
+
+def test_investigation_evidence():
+    evidence = InvestigationEvidence(
+        source="get_current_metric",
+        description="CPU utilization is high",
+        value=96,
+    )
+
+    assert evidence.source == "get_current_metric"
+    assert evidence.description == "CPU utilization is high"
+    assert evidence.value == 96
+
+
+def test_investigation_finding():
+    evidence = InvestigationEvidence(
+        source="get_current_metric",
+        description="CPU utilization is high",
+        value=96,
+    )
+
+    finding = InvestigationFinding(
+        hypothesis="CPU-side preprocessing bottleneck",
+        confidence=0.92,
+        evidence=[evidence],
+    )
+
+    assert finding.hypothesis == "CPU-side preprocessing bottleneck"
+    assert finding.confidence == 0.92
+    assert len(finding.evidence) == 1
+    assert finding.evidence[0].value == 96
+
+
+def test_agent_run_result_contains_findings():
+    state = AgentState()
+    state.mark_completed()
+
+    evidence = InvestigationEvidence(
+        source="get_current_metric",
+        description="CPU utilization is high",
+        value=96,
+    )
+
+    finding = InvestigationFinding(
+        hypothesis="CPU-side preprocessing bottleneck",
+        confidence=0.92,
+        evidence=[evidence],
+    )
+
+    result = AgentRunResult(
+        answer="CPU-side preprocessing is the likely bottleneck.",
+        state=state,
+        findings=[finding],
+    )
+
+    assert result.answer == "CPU-side preprocessing is the likely bottleneck."
+    assert result.state is state
+    assert result.findings == [finding]
+    assert result.findings[0].confidence == 0.92
+
+def test_agent_state_add_evidence():
+    state = AgentState()
+
+    evidence = InvestigationEvidence(
+        source="get_current_metric",
+        description="CPU utilization is high",
+        value=96,
+    )
+
+    state.add_evidence(evidence)
+
+    assert len(state.evidence) == 1
+    assert state.evidence[0] is evidence
+

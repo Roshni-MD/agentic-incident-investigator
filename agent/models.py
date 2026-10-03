@@ -41,3 +41,19 @@ class InvestigationContext(BaseModel):
     available_tools: list[str] = Field(
         default_factory=list,
     )
+
+
+class InvestigationEvidence(BaseModel):
+    """Evidence collected during an investigation."""
+
+    source: str
+    description: str
+    value: object | None = None
+
+
+class InvestigationFinding(BaseModel):
+    """A finding derived from investigation evidence."""
+
+    hypothesis: str
+    confidence: float
+    evidence: list[InvestigationEvidence] = Field(default_factory=list)

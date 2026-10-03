@@ -8,6 +8,8 @@ from .models import AgentMessage
 from .state import AgentRunResult, AgentState
 from .tool_executor import ToolExecutor
 from .tools import AgentToolRegistry
+from .evidence import EvidenceCollector
+from agent import state
 
 
 class AgentRunner:
@@ -18,11 +20,15 @@ class AgentRunner:
         llm: LLMClient,
         tools: AgentToolRegistry,
         max_iterations: int = 10,
+        evidence_collector: EvidenceCollector | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
         self.tool_executor = ToolExecutor(tools)
         self.max_iterations = max_iterations
+        self.evidence_collector = (
+            evidence_collector or EvidenceCollector()
+        )
 
     async def run(
         self,
@@ -69,6 +75,14 @@ class AgentRunner:
 
             for tool_call in response.tool_calls:
                 result = await self.tool_executor.execute(tool_call)
+
+                evidence = self.evidence_collector.collect(
+                    tool_name=tool_call.tool_name,
+                    result=result,
+                )
+
+                for item in evidence:
+                    state.add_evidence(item)
 
                 state.add_tool_result(
                     content=json.dumps(result),
