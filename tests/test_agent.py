@@ -23,6 +23,7 @@ from agent.context import (
 )
 from agent.tool_executor import ToolExecutor
 from agent.state import AgentRunResult, AgentState, InvestigationStatus
+from agent.finding_extractor import FindingExtractor
 
 
 class MockLLM(LLMClient):
@@ -73,6 +74,20 @@ class InfiniteToolLLM(LLMClient):
                 )
             ],
         )
+
+
+class TestFindingExtractor(FindingExtractor):
+    def extract(self, evidence):
+        return [
+            InvestigationFinding(
+                hypothesis="Test hypothesis",
+                confidence=0.75,
+                explanation="Test explanation",
+                evidence=evidence,
+                recommended_actions=["Test action"],
+            )
+        ]
+
 
 def test_agent_message():
     message = AgentMessage(
@@ -427,6 +442,14 @@ async def test_agent_runner_supports_multi_step_investigation():
     )
     assert response.state.status == InvestigationStatus.COMPLETED
     assert response.state.iteration == 3
+    assert response.findings
+    assert len(response.findings) == 1
+    finding = response.findings[0]
+
+    assert finding.hypothesis == "Evidence requires further analysis"
+    assert finding.confidence == 0.0
+    assert finding.evidence
+    assert len(finding.evidence) == len(response.state.evidence)
 
     assert calls == [
         "get_service_health",
@@ -1035,6 +1058,10 @@ async def test_agent_runner_tracks_investigation_state():
     assert response.state.iteration == 2
     assert llm.call_count == 2
     assert captured_state["message_count"] == 4
+    assert response.findings
+    assert len(response.findings) == 1
+    assert response.findings[0].hypothesis == "Evidence requires further analysis"
+    assert len(response.findings[0].evidence) > 0
 
 def test_agent_state_adds_messages():
     state = AgentState()
@@ -1190,3 +1217,84 @@ def test_agent_state_add_evidence():
     assert len(state.evidence) == 1
     assert state.evidence[0] is evidence
 
+
+@pytest.mark.asyncio
+async def test_agent_runner_uses_injected_finding_extractor():
+    incident, _ = load_cpu_bottleneck_scenario()
+
+    registry = AgentToolRegistry()
+
+    async def get_service_health(
+        service_name: str,
+    ) -> dict[str, object]:
+        """Get the current health of an ML service."""
+        return {
+            "service_name": service_name,
+            "status": "ok",
+            "cpu": 96,
+            "gpu": 42,
+        }
+
+    registry.register(
+        "get_service_health",
+        get_service_health,
+    )
+
+    class TestLLM(LLMClient):
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.call_count += 1
+
+            if self.call_count == 1:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_service_health",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call-1",
+                        )
+                    ]
+                )
+
+            return AgentResponse(
+                answer="Investigation complete.",
+            )
+
+    llm = TestLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+        finding_extractor=TestFindingExtractor(),
+    )
+
+    result = await runner.run(incident)
+
+    assert result.answer == "Investigation complete."
+    assert result.state.status == InvestigationStatus.COMPLETED
+
+    # Verify evidence was actually collected.
+    assert result.state.evidence
+    assert len(result.state.evidence) > 0
+
+    # Verify the injected extractor was used.
+    assert result.findings
+    assert len(result.findings) == 1
+
+    finding = result.findings[0]
+
+    assert finding.hypothesis == "Test hypothesis"
+    assert finding.confidence == 0.75
+    assert finding.explanation == "Test explanation"
+    assert finding.recommended_actions == ["Test action"]
+
+    # Verify the extractor received the evidence collected by the agent.
+    assert finding.evidence == result.state.evidence

@@ -52,8 +52,8 @@ class InvestigationEvidence(BaseModel):
 
 
 class InvestigationFinding(BaseModel):
-    """A finding derived from investigation evidence."""
-
     hypothesis: str
-    confidence: float
+    confidence: float = Field(ge=0, le=1)
+    explanation: str = ""
     evidence: list[InvestigationEvidence] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)

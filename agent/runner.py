@@ -10,6 +10,7 @@ from .tool_executor import ToolExecutor
 from .tools import AgentToolRegistry
 from .evidence import EvidenceCollector
 from agent import state
+from .finding_extractor import EvidenceFindingExtractor, FindingExtractor
 
 
 class AgentRunner:
@@ -21,6 +22,7 @@ class AgentRunner:
         tools: AgentToolRegistry,
         max_iterations: int = 10,
         evidence_collector: EvidenceCollector | None = None,
+        finding_extractor: FindingExtractor | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -29,6 +31,7 @@ class AgentRunner:
         self.evidence_collector = (
             evidence_collector or EvidenceCollector()
         )
+        self.finding_extractor = finding_extractor or EvidenceFindingExtractor()
 
     async def run(
         self,
@@ -66,9 +69,15 @@ class AgentRunner:
 
             if not response.tool_calls:
                 state.mark_completed()
+
+                findings = self.finding_extractor.extract(
+                    state.evidence
+                )
+
                 return AgentRunResult(
                     answer=response.answer,
                     state=state,
+                    findings=findings,
                 )
 
             state.add_assistant_response(response)
