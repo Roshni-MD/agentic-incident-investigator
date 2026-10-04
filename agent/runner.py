@@ -12,6 +12,7 @@ from .evidence import EvidenceCollector
 from agent import state
 from .finding_extractor import FindingExtractor, LLMFindingExtractor
 from .finding_quality import rank_findings
+from .result_formatter import InvestigationResultFormatter
 
 
 class AgentRunner:
@@ -24,6 +25,7 @@ class AgentRunner:
         max_iterations: int = 10,
         evidence_collector: EvidenceCollector | None = None,
         finding_extractor: FindingExtractor | None = None,
+        result_formatter: InvestigationResultFormatter | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -36,6 +38,11 @@ class AgentRunner:
             finding_extractor
             if finding_extractor is not None
             else LLMFindingExtractor(llm)
+        )
+        self.result_formatter = (
+            result_formatter
+            if result_formatter is not None
+            else InvestigationResultFormatter()
         )
 
     async def run(
@@ -80,11 +87,15 @@ class AgentRunner:
                 )
                 findings = rank_findings(findings)
 
-                return AgentRunResult(
+                result = AgentRunResult(
                     answer=response.answer,
                     state=state,
                     findings=findings,
                 )
+
+                result.formatted_report = self.result_formatter.format(result)
+
+                return result
 
             state.add_assistant_response(response)
 

@@ -70,3 +70,4 @@ class AgentRunResult(BaseModel):
     answer: str
     state: AgentState
     findings: list[InvestigationFinding] = Field(default_factory=list)
+    formatted_report: str = ""

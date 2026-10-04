@@ -1520,3 +1520,74 @@ async def test_agent_runner_uses_llm_finding_extractor():
     assert finding.evidence[1] == result.state.evidence[1]
 
     assert llm.finding_prompt_received is True
+
+@pytest.mark.asyncio
+async def test_agent_runner_formats_investigation_result():
+    incident, _ = load_cpu_bottleneck_scenario()
+
+    registry = AgentToolRegistry()
+
+    async def get_service_health(
+        service_name: str,
+    ) -> dict[str, object]:
+        return {
+            "service_name": service_name,
+            "status": "ok",
+            "cpu": 96,
+            "gpu": 42,
+        }
+
+    registry.register(
+        "get_service_health",
+        get_service_health,
+    )
+
+    class TestLLM(LLMClient):
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.call_count += 1
+
+            if self.call_count == 1:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_service_health",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call-health",
+                        )
+                    ]
+                )
+
+            return AgentResponse(
+                answer="Investigation complete.",
+            )
+
+    llm = TestLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+        finding_extractor=TestFindingExtractor(),
+    )
+
+    result = await runner.run(incident)
+
+    assert result.answer == "Investigation complete."
+
+    assert result.formatted_report
+
+    assert "Investigation Summary" in result.formatted_report
+    assert "Root Cause: Test hypothesis" in result.formatted_report
+    assert "Confidence: 75%" in result.formatted_report
+    assert "Test explanation" in result.formatted_report
+    assert "Supporting Evidence:" in result.formatted_report
+    assert "Recommended Actions:" in result.formatted_report
+    assert "1. Test action" in result.formatted_report
