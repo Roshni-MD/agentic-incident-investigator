@@ -1,38 +1,119 @@
-from agent.finding_extractor import EvidenceFindingExtractor
-from agent.models import InvestigationEvidence
+import pytest
+
+from agent.finding_extractor import LLMFindingExtractor
+from agent.models import AgentMessage, AgentResponse, InvestigationEvidence
+from agent.llm import LLMClient
 
 
-def test_evidence_finding_extractor_returns_empty_for_no_evidence():
-    extractor = EvidenceFindingExtractor()
+class MockFindingLLM(LLMClient):
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+        self.messages = None
 
-    findings = extractor.extract([])
+    async def generate(
+        self,
+        messages: list[AgentMessage],
+        tools=None,
+    ) -> AgentResponse:
+        self.messages = messages
+
+        return AgentResponse(
+            answer=self.answer,
+        )
+
+
+@pytest.mark.asyncio
+async def test_llm_finding_extractor_creates_structured_finding():
+    llm = MockFindingLLM(
+        """
+        {
+            "hypothesis": "CPU-side preprocessing bottleneck",
+            "confidence": 0.87,
+            "explanation": "CPU utilization is saturated while GPU utilization is low.",
+            "evidence_indices": [0, 1],
+            "recommended_actions": [
+                "Profile CPU-side preprocessing",
+                "Investigate data loading latency"
+            ]
+        }
+        """
+    )
+
+    extractor = LLMFindingExtractor(llm)
+
+    evidence = [
+        InvestigationEvidence(
+            source="get_service_health",
+            description="cpu is 96",
+            value=96,
+        ),
+        InvestigationEvidence(
+            source="get_service_health",
+            description="gpu is 42",
+            value=42,
+        ),
+    ]
+
+    findings = await extractor.extract(evidence)
+
+    assert len(findings) == 1
+
+    finding = findings[0]
+
+    assert finding.hypothesis == "CPU-side preprocessing bottleneck"
+    assert finding.confidence == 0.87
+    assert (
+        finding.explanation
+        == "CPU utilization is saturated while GPU utilization is low."
+    )
+
+    assert len(finding.evidence) == 2
+    assert finding.evidence[0] == evidence[0]
+    assert finding.evidence[1] == evidence[1]
+
+    assert finding.recommended_actions == [
+        "Profile CPU-side preprocessing",
+        "Investigate data loading latency",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_llm_finding_extractor_returns_empty_for_no_evidence():
+    llm = MockFindingLLM("should not be called")
+
+    extractor = LLMFindingExtractor(llm)
+
+    findings = await extractor.extract([])
 
     assert findings == []
+    assert llm.messages is None
 
+@pytest.mark.asyncio
+async def test_llm_finding_extractor_ignores_invalid_evidence_indices():
+    llm = MockFindingLLM(
+        """
+        {
+            "hypothesis": "CPU bottleneck",
+            "confidence": 0.8,
+            "explanation": "CPU utilization is high.",
+            "evidence_indices": [0, 99, -1],
+            "recommended_actions": []
+        }
+        """
+    )
 
-def test_evidence_finding_extractor_creates_finding_from_evidence():
-    extractor = EvidenceFindingExtractor()
+    extractor = LLMFindingExtractor(llm)
 
     evidence = [
         InvestigationEvidence(
             source="get_current_metric",
             description="cpu_utilization is 96",
             value=96,
-        ),
-        InvestigationEvidence(
-            source="get_current_metric",
-            description="gpu_utilization is 42",
-            value=42,
-        ),
+        )
     ]
 
-    findings = extractor.extract(evidence)
+    findings = await extractor.extract(evidence)
 
     assert len(findings) == 1
-
-    finding = findings[0]
-
-    assert finding.hypothesis == "Evidence requires further analysis"
-    assert finding.confidence == 0.0
-    assert len(finding.evidence) == 2
-    assert finding.evidence[0].description == "cpu_utilization is 96"
+    assert len(findings[0].evidence) == 1
+    assert findings[0].evidence[0] == evidence[0]

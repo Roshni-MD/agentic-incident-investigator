@@ -77,7 +77,7 @@ class InfiniteToolLLM(LLMClient):
 
 
 class TestFindingExtractor(FindingExtractor):
-    def extract(self, evidence):
+    async def extract(self, evidence):
         return [
             InvestigationFinding(
                 hypothesis="Test hypothesis",
@@ -245,6 +245,7 @@ async def test_agent_runner_executes_tool_calls():
     runner = AgentRunner(
         llm=llm,
         tools=registry,
+        finding_extractor=TestFindingExtractor(),
     )
 
     response = await runner.run(incident)
@@ -432,6 +433,7 @@ async def test_agent_runner_supports_multi_step_investigation():
     runner = AgentRunner(
         llm=llm,
         tools=registry,
+        finding_extractor=TestFindingExtractor(),
     )
 
     response = await runner.run(incident)
@@ -446,8 +448,8 @@ async def test_agent_runner_supports_multi_step_investigation():
     assert len(response.findings) == 1
     finding = response.findings[0]
 
-    assert finding.hypothesis == "Evidence requires further analysis"
-    assert finding.confidence == 0.0
+    assert finding.hypothesis == "Test hypothesis"
+    assert finding.confidence == 0.75
     assert finding.evidence
     assert len(finding.evidence) == len(response.state.evidence)
 
@@ -638,6 +640,7 @@ async def test_agent_runner_uses_real_telemetry_tools():
     runner = AgentRunner(
         llm=llm,
         tools=registry,
+        finding_extractor=TestFindingExtractor(),
     )
 
     response = await runner.run(incident)
@@ -820,6 +823,7 @@ async def test_agent_runner_performs_multi_source_investigation():
     runner = AgentRunner(
         llm=llm,
         tools=registry,
+        finding_extractor=TestFindingExtractor(),
     )
 
     response = await runner.run(incident)
@@ -886,6 +890,7 @@ async def test_agent_runner_serializes_tool_results_as_json():
     runner = AgentRunner(
         llm=llm,
         tools=registry,
+        finding_extractor=TestFindingExtractor(),
     )
 
     response = await runner.run(incident)
@@ -1049,7 +1054,11 @@ async def test_agent_runner_tracks_investigation_state():
             )
 
     llm = StateTrackingLLM()
-    runner = AgentRunner(llm=llm, tools=registry)
+    runner = AgentRunner(
+        llm=llm, 
+        tools=registry, 
+        finding_extractor=TestFindingExtractor()
+    )
 
     response = await runner.run(incident)
 
@@ -1060,7 +1069,7 @@ async def test_agent_runner_tracks_investigation_state():
     assert captured_state["message_count"] == 4
     assert response.findings
     assert len(response.findings) == 1
-    assert response.findings[0].hypothesis == "Evidence requires further analysis"
+    assert response.findings[0].hypothesis == "Test hypothesis"
     assert len(response.findings[0].evidence) > 0
 
 def test_agent_state_adds_messages():
