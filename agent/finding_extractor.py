@@ -1,3 +1,4 @@
+import json
 from abc import ABC, abstractmethod
 
 from .llm import LLMClient
@@ -71,30 +72,74 @@ class LLMFindingExtractor(FindingExtractor):
             )
         ]
 
+    def _fallback_finding(
+        self,
+        evidence: list[InvestigationEvidence],
+    ) -> InvestigationFinding:
+        return InvestigationFinding(
+            hypothesis="Unable to determine root cause",
+            confidence=0.0,
+            explanation=(
+                "The investigation collected telemetry evidence, "
+                "but the finding model returned an invalid structured response."
+            ),
+            evidence=evidence,
+            recommended_actions=[
+                "Review the collected telemetry evidence manually."
+            ],
+        )
+
     def _parse_finding(
         self,
         answer: str,
         evidence: list[InvestigationEvidence],
     ) -> InvestigationFinding:
-        import json
 
-        data = json.loads(answer)
+        try:
+            data = json.loads(answer)
 
-        evidence_indices = data.get("evidence_indices", [])
+            if not isinstance(data, dict):
+                return self._fallback_finding(evidence)
 
-        selected_evidence = [
-            evidence[index]
-            for index in evidence_indices
-            if isinstance(index, int) and 0 <= index < len(evidence)
-        ]
+            hypothesis = data.get("hypothesis")
+            confidence = data.get("confidence")
 
-        return InvestigationFinding(
-            hypothesis=data["hypothesis"],
-            confidence=data["confidence"],
-            explanation=data.get("explanation", ""),
-            evidence=selected_evidence,
-            recommended_actions=data.get(
+            if not isinstance(hypothesis, str):
+                return self._fallback_finding(evidence)
+
+            if not isinstance(confidence, (int, float)):
+                return self._fallback_finding(evidence)
+
+            if not 0 <= confidence <= 1:
+                return self._fallback_finding(evidence)
+
+            evidence_indices = data.get("evidence_indices", [])
+
+            if not isinstance(evidence_indices, list):
+                evidence_indices = []
+
+            selected_evidence = [
+                evidence[index]
+                for index in evidence_indices
+                if isinstance(index, int)
+                and 0 <= index < len(evidence)
+            ]
+
+            recommended_actions = data.get(
                 "recommended_actions",
                 [],
-            ),
-        )
+            )
+
+            if not isinstance(recommended_actions, list):
+                recommended_actions = []
+
+            return InvestigationFinding(
+                hypothesis=hypothesis,
+                confidence=float(confidence),
+                explanation=data.get("explanation", ""),
+                evidence=selected_evidence,
+                recommended_actions=recommended_actions,
+            )
+
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return self._fallback_finding(evidence)
