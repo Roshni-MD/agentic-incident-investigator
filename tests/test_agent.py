@@ -1430,3 +1430,93 @@ async def test_end_to_end_agent_evaluation_matches_reference_analyzer():
     assert agent_result.state.status == InvestigationStatus.COMPLETED
     assert agent_result.state.evidence
     assert agent_result.state.iteration == 3
+
+@pytest.mark.asyncio
+async def test_agent_runner_uses_llm_finding_extractor():
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    registry = build_telemetry_tool_registry(repository)
+
+    class ProductionPathLLM(LLMClient):
+        def __init__(self) -> None:
+            self.call_count = 0
+            self.finding_prompt_received = False
+
+        async def generate(
+            self,
+            messages: list[AgentMessage],
+            tools=None,
+        ) -> AgentResponse:
+            self.call_count += 1
+
+            # Agent investigation.
+            if self.call_count == 1:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_service_health",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call-health",
+                        )
+                    ]
+                )
+
+            # Agent final answer.
+            if self.call_count == 2:
+                return AgentResponse(
+                    answer="Investigation complete."
+                )
+
+            # Finding extraction.
+            self.finding_prompt_received = True
+
+            answer = json.dumps(
+                {
+                    "hypothesis": "CPU-side preprocessing bottleneck",
+                    "confidence": 0.91,
+                    "explanation": (
+                        "The telemetry indicates high CPU "
+                        "utilization and low GPU utilization."
+                    ),
+                    "evidence_indices": [0, 1],
+                    "recommended_actions": [
+                        "Investigate CPU-side preprocessing."
+                    ],
+                }
+            )
+
+            print("FINDING LLM ANSWER:", answer)
+
+            return AgentResponse(answer=answer)
+            
+
+    llm = ProductionPathLLM()
+
+    runner = AgentRunner(
+        llm=llm,
+        tools=registry,
+    )
+
+    result = await runner.run(incident)
+
+    assert result.answer == "Investigation complete."
+
+    assert result.findings
+    assert len(result.findings) == 1
+
+    finding = result.findings[0]
+
+    print("FINDING:", finding)
+    print("STATE EVIDENCE:", result.state.evidence)
+    assert finding.hypothesis == (
+        "CPU-side preprocessing bottleneck"
+    )
+    assert finding.confidence == 0.91
+
+    assert len(finding.evidence) == 2
+    assert finding.evidence[0] == result.state.evidence[0]
+    assert finding.evidence[1] == result.state.evidence[1]
+
+    assert llm.finding_prompt_received is True

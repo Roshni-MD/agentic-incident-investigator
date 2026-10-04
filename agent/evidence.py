@@ -64,38 +64,69 @@ class EvidenceCollector:
         self,
         result: Any,
     ) -> list[InvestigationEvidence]:
-        metrics = [
-            "cpu",
-            "gpu",
-            "gpu_mem",
-            "p95",
-            "throughput",
-            "data_loading",
-            "gpu_kernel",
-        ]
-
         evidence = []
 
-        for metric in metrics:
-            if metric in result:
+        # Production format:
+        # {
+        #     "service_name": "...",
+        #     "status": "ok",
+        #     "metrics": {
+        #         "cpu_utilization": {
+        #             "value": 96.0,
+        #             "timestamp": "..."
+        #         },
+        #         ...
+        #     }
+        # }
+        metrics = result.get("metrics") if isinstance(result, dict) else None
+
+        if isinstance(metrics, dict):
+            for metric_name, metric_data in metrics.items():
+                value = metric_data.get("value")
+                timestamp = metric_data.get("timestamp")
+
                 evidence.append(
                     InvestigationEvidence(
                         source="get_service_health",
-                        description=f"{metric} is {result[metric]}",
-                        value=result[metric],
+                        description=(
+                            f"{metric_name} is {value}"
+                            f" at {timestamp}"
+                        ),
+                        value=value,
                     )
                 )
 
-            if not evidence:
-                evidence.append(
-                    InvestigationEvidence(
-                        source="get_service_health",
-                        description="Result returned by get_service_health",
-                        value=result,
-                    )
-                )
+            return evidence
 
-        return evidence
+        # Flat format used by the test:
+        # {
+        #     "cpu": 96,
+        #     "gpu": 42,
+        #     ...
+        # }
+        if isinstance(result, dict):
+            for metric_name, value in result.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    evidence.append(
+                        InvestigationEvidence(
+                            source="get_service_health",
+                            description=f"{metric_name} is {value}",
+                            value=value,
+                        )
+                    )
+
+        if evidence:
+            return evidence
+
+        # Unknown/unexpected format
+        return [
+            InvestigationEvidence(
+                source="get_service_health",
+                description="Result returned by get_service_health",
+                value=result,
+            )
+        ]
+
 
     def _collect_metric_history(
         self,

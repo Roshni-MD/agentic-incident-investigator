@@ -71,6 +71,42 @@ def test_evidence_collector_service_health():
     assert evidence[3].description == "p95 is 135"
     assert evidence[3].value == 135
 
+def test_evidence_collector_extracts_nested_service_health_metrics():
+    collector = EvidenceCollector()
+
+    result = {
+        "service_name": "image-ranking-service",
+        "status": "ok",
+        "metrics": {
+            "cpu_utilization": {
+                "value": 96.0,
+                "timestamp": "2026-10-04T22:59:42+00:00",
+            },
+            "gpu_utilization": {
+                "value": 42.0,
+                "timestamp": "2026-10-04T22:59:42+00:00",
+            },
+        },
+    }
+
+    evidence = collector.collect(
+        tool_name="get_service_health",
+        result=result,
+    )
+
+    assert len(evidence) == 2
+
+    assert evidence[0].source == "get_service_health"
+    assert evidence[0].description == (
+        "cpu_utilization is 96.0 at 2026-10-04T22:59:42+00:00"
+    )
+    assert evidence[0].value == 96.0
+
+    assert evidence[1].description == (
+        "gpu_utilization is 42.0 at 2026-10-04T22:59:42+00:00"
+    )
+    assert evidence[1].value == 42.0
+
 def test_evidence_collector_metric_history():
     collector = EvidenceCollector()
 
