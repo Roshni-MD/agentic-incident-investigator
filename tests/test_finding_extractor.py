@@ -227,3 +227,65 @@ async def test_llm_finding_extractor_handles_missing_hypothesis():
     assert findings[0].hypothesis == (
         "Unable to determine root cause"
     )
+
+@pytest.mark.asyncio
+async def test_llm_finding_extractor_preserves_evidence_traceability():
+    class TraceabilityLLM(LLMClient):
+        async def generate(
+            self,
+            messages,
+            tools=None,
+        ):
+            return AgentResponse(
+                answer=json.dumps(
+                    {
+                        "hypothesis": (
+                            "CPU-side preprocessing bottleneck"
+                        ),
+                        "confidence": 0.92,
+                        "explanation": (
+                            "CPU utilization increased while "
+                            "GPU utilization decreased."
+                        ),
+                        "evidence_indices": [0, 2],
+                        "recommended_actions": [
+                            "Investigate CPU-side preprocessing."
+                        ],
+                    }
+                )
+            )
+
+    evidence = [
+        InvestigationEvidence(
+            source="get_current_metric",
+            description="CPU utilization is 96",
+            value=96,
+        ),
+        InvestigationEvidence(
+            source="get_current_metric",
+            description="GPU utilization is 42",
+            value=42,
+        ),
+        InvestigationEvidence(
+            source="get_metric_history",
+            description="CPU increased from 20 to 96",
+            value=96,
+        ),
+    ]
+
+    extractor = LLMFindingExtractor(TraceabilityLLM())
+
+    findings = await extractor.extract(evidence)
+
+    finding = findings[0]
+
+    assert finding.hypothesis == (
+        "CPU-side preprocessing bottleneck"
+    )
+
+    assert finding.confidence == 0.92
+
+    assert len(finding.evidence) == 2
+
+    assert finding.evidence[0] is evidence[0]
+    assert finding.evidence[1] is evidence[2]

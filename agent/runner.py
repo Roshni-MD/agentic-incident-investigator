@@ -11,6 +11,7 @@ from .tools import AgentToolRegistry
 from .evidence import EvidenceCollector
 from agent import state
 from .finding_extractor import FindingExtractor, LLMFindingExtractor
+from .finding_quality import rank_findings
 
 
 class AgentRunner:
@@ -77,6 +78,7 @@ class AgentRunner:
                 findings = await self.finding_extractor.extract(
                     state.evidence
                 )
+                findings = rank_findings(findings)
 
                 return AgentRunResult(
                     answer=response.answer,

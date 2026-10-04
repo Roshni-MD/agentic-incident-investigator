@@ -24,6 +24,7 @@ from agent.context import (
 from agent.tool_executor import ToolExecutor
 from agent.state import AgentRunResult, AgentState, InvestigationStatus
 from agent.finding_extractor import FindingExtractor
+from agent.evaluation import evaluate_finding
 
 
 class MockLLM(LLMClient):
@@ -1307,3 +1308,125 @@ async def test_agent_runner_uses_injected_finding_extractor():
 
     # Verify the extractor received the evidence collected by the agent.
     assert finding.evidence == result.state.evidence
+
+@pytest.mark.asyncio
+async def test_end_to_end_agent_evaluation_matches_reference_analyzer():
+    """
+    End-to-end evaluation of the agent investigation.
+
+    The deterministic IncidentAnalyzer provides the expected/reference
+    root cause. The AgentRunner performs the investigation through its
+    telemetry tools, collects structured evidence, and produces a finding.
+
+    The finding extractor is injected so this test remains deterministic
+    and does not require an external LLM API call.
+    """
+
+    # 1. Load the incident and its real telemetry repository.
+    incident, repository = load_cpu_bottleneck_scenario()
+
+    # 2. Generate the expected root cause using the deterministic analyzer.
+    analyzer = IncidentAnalyzer(repository)
+    reference_report = analyzer.investigate(incident)
+
+    assert (
+        reference_report.likely_root_cause
+        == "CPU-side preprocessing bottleneck"
+    )
+
+    # 3. Use the actual telemetry tool registry.
+    registry = build_telemetry_tool_registry(repository)
+
+    # 4. Simulate the LLM's tool calls and final response.
+    class EvaluationLLM(LLMClient):
+        def __init__(self):
+            self.call_count = 0
+
+        async def generate(self, messages, tools=None) -> AgentResponse:
+            self.call_count += 1
+
+            if self.call_count == 1:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_service_health",
+                            arguments={
+                                "service_name": incident.service_name,
+                            },
+                            tool_call_id="call_health",
+                        )
+                    ]
+                )
+
+            if self.call_count == 2:
+                return AgentResponse(
+                    tool_calls=[
+                        AgentToolCall(
+                            tool_name="get_metric_history",
+                            arguments={
+                                "metric_name": "cpu_utilization",
+                                "service_name": incident.service_name,
+                                "start_time": incident.metrics[0].timestamp.isoformat(),
+                                "end_time": incident.metrics[-1].timestamp.isoformat(),
+                            },
+                            tool_call_id="call_history",
+                        )
+                    ]
+                )
+
+            return AgentResponse(
+                answer=(
+                    "The likely root cause is a "
+                    "CPU-side preprocessing bottleneck."
+                )
+            )
+
+    # 5. Inject a deterministic finding extractor so this test does not
+    # require an external LLM API call for finding generation.
+    class ReferenceFindingExtractor(FindingExtractor):
+        async def extract(
+            self,
+            evidence: list[InvestigationEvidence],
+        ) -> list[InvestigationFinding]:
+            return [
+                InvestigationFinding(
+                    hypothesis=reference_report.likely_root_cause,
+                    confidence=0.92,
+                    explanation=(
+                        "The collected telemetry is consistent with "
+                        "a CPU-side preprocessing bottleneck."
+                    ),
+                    evidence=evidence,
+                    recommended_actions=[
+                        "Investigate CPU-side preprocessing.",
+                        "Review the data-loading pipeline.",
+                    ],
+                )
+            ]
+
+    # 6. Run the agent.
+    runner = AgentRunner(
+        llm=EvaluationLLM(),
+        tools=registry,
+        finding_extractor=ReferenceFindingExtractor(),
+    )
+
+    agent_result = await runner.run(incident)
+
+    # 7. Evaluate the agent's finding against the reference result.
+    assert agent_result.findings
+
+    evaluation = evaluate_finding(
+        finding=agent_result.findings[0],
+        expected_hypothesis=reference_report.likely_root_cause,
+    )
+
+    assert evaluation.matches_expected_hypothesis is True
+    assert evaluation.confidence == 0.92
+    assert evaluation.evidence_count > 0
+
+    # 8. Validate the complete investigation lifecycle.
+    assert agent_result.answer
+    assert agent_result.state.status == InvestigationStatus.COMPLETED
+    assert agent_result.state.evidence
+    assert agent_result.state.iteration == 3
